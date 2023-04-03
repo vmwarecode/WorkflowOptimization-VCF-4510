@@ -10,5 +10,3 @@ vxrail_versions:
     path: "sampleJsons/vxrail_firstrun_7_0_400.json"
   - version: "7.0.450"
     path: "sampleJsons/vxrail_firstrun_7_0_450.json"
-  - version: "8.0.000"
-    path: "sampleJsons/vxrail_firstrun_8_0_000.json"

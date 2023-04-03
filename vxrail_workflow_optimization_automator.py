@@ -19,7 +19,7 @@ from vxrailDetails.vxrailjsonconverterpatch import VxRailJsonConverterPatch
 
 __author__ = 'virtis'
 
-REQ_VCF_VER = ['4.5']
+REQ_VCF_VER = ['4.5.1']
 VCF_SUBSCRIPTION_FT = 'feature.vcf.plus.subscription'
 VXRAIL_SUBSCRIPTION_FT = 'feature.vcf.plus.subscription.vxrail'
 
