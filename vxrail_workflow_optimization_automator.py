@@ -19,7 +19,7 @@ from vxrailDetails.vxrailjsonconverterpatch import VxRailJsonConverterPatch
 
 __author__ = 'virtis'
 
-REQ_VCF_VER = ['4.5.1']
+REQ_VCF_VER = ['4.5.1', '4.5.2']
 VCF_SUBSCRIPTION_FT = 'feature.vcf.plus.subscription'
 VXRAIL_SUBSCRIPTION_FT = 'feature.vcf.plus.subscription.vxrail'
 
@@ -38,11 +38,12 @@ class VxRailWorkflowOptimizationAutomator:
         self.converter_patch = VxRailJsonConverterPatch(args)
         self.hostname = args[0]
         self.two_line_separator = ['', '']
+        self.sddc_manager_version = None
 
     def run(self):
         try:
             print(*self.two_line_separator, sep='\n')
-            self.check_sddc_manager_version()
+            self.sddc_manager_version = self.check_sddc_manager_version()
             self.utils.printCyan("Please choose one of the below option:")
             self.utils.printBold("1) Create Domain")
             self.utils.printBold("2) Add Cluster")
@@ -70,11 +71,11 @@ class VxRailWorkflowOptimizationAutomator:
         url = 'https://' + self.hostname + '/v1/sddc-managers'
         sddc_json = self.utils.get_request(url)
         sddc_ver = None
-        for domain in sddc_json['elements']:
-            sddc_ver = domain['version'].split("-")[0]
+        for sddc_manager in sddc_json['elements']:
+            sddc_ver = sddc_manager['version'].split("-")[0]
         for req_ver in REQ_VCF_VER:
             if sddc_ver is not None and sddc_ver.startswith(req_ver):
-                return
+                return sddc_ver
         print('\033[91m Fetched VCF version is {} which is not matching with required version {}'.format(sddc_ver,
                                                                                                          REQ_VCF_VER))
         print('\033[91m Please make sure the VCF version should be {}'.format(REQ_VCF_VER))
@@ -152,12 +153,16 @@ class VxRailWorkflowOptimizationAutomator:
         licensing_info_url = 'https://' + self.hostname + '/v1/licensing-info'
         response = self.utils.get_request(licensing_info_url)
         if domain_id is None:
-            licensing_info = self.get_system_licensing_info(response)
+            licensing_info = self.extract_system_licensing_info(response)
         else:
-            licensing_info = self.get_domain_licensing_info(response, domain_id)
+            licensing_info = self.extract_domain_licensing_info(response, domain_id)
         return licensing_info
 
-    def get_system_licensing_info(self, response):
+    def get_system_licensing_info(self):
+        system_licensing_info_url = 'https://' + self.hostname + '/v1/licensing-info/system'
+        return self.utils.get_request(system_licensing_info_url)
+
+    def extract_system_licensing_info(self, response):
         licensing_info = None
         for resource in response:
             if resource['resourceType'] == 'SYSTEM':
@@ -167,7 +172,7 @@ class VxRailWorkflowOptimizationAutomator:
             exit(1)
         return licensing_info
 
-    def get_domain_licensing_info(self, response, domain_id):
+    def extract_domain_licensing_info(self, response, domain_id):
         licensing_info = None
         for resource in response:
             if resource['resourceType'] == 'DOMAIN' and resource['resourceId'] == domain_id:
@@ -178,16 +183,10 @@ class VxRailWorkflowOptimizationAutomator:
         return licensing_info
 
     def is_subscription_active(self, licensing_info):
-        sub_active = False
-        if licensing_info['licensingMode'] == 'SUBSCRIPTION' and licensing_info['subscriptionStatus'] == 'ACTIVE':
-            sub_active = True
-        return sub_active
+        return licensing_info['licensingMode'] == 'SUBSCRIPTION' and licensing_info['subscriptionStatus'] == 'ACTIVE'
 
     def is_perpetual(self, licensing_info):
-        perpetual_mode = False
-        if licensing_info['licensingMode'] == 'PERPETUAL':
-            perpetual_mode = True
-        return perpetual_mode
+        return licensing_info['licensingMode'] == 'PERPETUAL'
 
     def check_lock_acquired_by_workflows(self):
         url = 'http://' + self.hostname + '/locks'
@@ -302,6 +301,20 @@ class VxRailWorkflowOptimizationAutomator:
             else:
                 check_domain_name = False
 
+        use_keyless_in_mixed_mode = False
+        if self.utils.does_given_version_satisfy_minimum(self.sddc_manager_version, '4.5.2'):
+            system_licensing_info = self.get_system_licensing_info()
+            is_system_licensing_mixed = system_licensing_info['licensingMode'] == 'MIXED'
+            if is_system_licensing_mixed:
+                print(*self.two_line_separator, sep='\n')
+                self.utils.printCyan("Please select the type of licensing for the Domain:")
+                self.utils.printBold("1) Perpetual")
+                self.utils.printBold("2) VMware Cloud Foundation+")
+                licensing_selection = self.utils.valid_input("\033[1m Enter your choice(number): \033[0m", None,
+                                                             self.utils.valid_option, ["1", "2"])
+                if licensing_selection == "2":
+                    use_keyless_in_mixed_mode = True
+
         print(*self.two_line_separator, sep='\n')
 
         datastore_name = self.utils.valid_input("\033[1m Enter datastore name: \033[0m", None,
@@ -318,7 +331,7 @@ class VxRailWorkflowOptimizationAutomator:
         vcenter_payload = vxm_payload = hosts_spec = cluster_name = dvs_payload = nsxt_payload = licenses = None
         if input_selection == "1":
             vcenter_payload, vxm_payload, hosts_spec, cluster_name, dvs_payload, nsxt_payload, licenses = \
-                self.get_specs_from_vxrail_json(None, True, existing_vcenters_fqdn)
+                self.get_specs_from_vxrail_json(None, True, existing_vcenters_fqdn, use_keyless_in_mixed_mode)
         elif input_selection == "2":
             domains = self.get_domains()
             mgmt_domain_id = None
@@ -327,7 +340,7 @@ class VxRailWorkflowOptimizationAutomator:
                     mgmt_domain_id = domain['id']
             vcenter_payload, gateway, netmask = self.enter_vcenter_inputs_and_prepare_payload(existing_vcenters_fqdn)
             cluster_name, hosts_spec, nsxt_payload, vxm_payload, dvs_payload, licenses = \
-                self.enter_inputs(True, gateway, netmask, mgmt_domain_id)
+                self.enter_inputs(True, gateway, netmask, mgmt_domain_id, use_keyless_in_mixed_mode)
 
         # Common code for both option 1 & 2
         domain_payload = self.prepare_payload_for_create_domain(domain_name, cluster_name, vcenter_payload,
@@ -386,7 +399,8 @@ class VxRailWorkflowOptimizationAutomator:
         return vcenter_spec, vcenter_gateway, vcenter_netmask
 
     # --------- Hong Test ------------------------------------------------------------
-    def get_specs_from_vxrail_json(self, selected_domain_id, is_primary=True, existing_vcenters_fqdn=None):
+    def get_specs_from_vxrail_json(self, selected_domain_id, is_primary=True, existing_vcenters_fqdn=None,
+                                   use_keyless_in_mixed_mode=False):
         print(*self.two_line_separator, sep='\n')
 
         json_location = input("\033[1m Please enter VxRail JSON location: \033[0m")
@@ -420,17 +434,8 @@ class VxRailWorkflowOptimizationAutomator:
             vxm_payload["adminCredentials"]["password"] = self.utils.handle_password_input("Enter password:")
             print(*self.two_line_separator, sep='\n')
 
-        if is_primary:
-            is_sub_active = self.check_is_subscription_active_mode(None)
-        else:
-            is_sub_active = self.check_is_subscription_active_mode(selected_domain_id)
-
-        licenses = None
-        if is_sub_active is False:
-            licenses = self.licenses.main_func(self.check_vsan_storage(vxm_payload['networks']))
-            if 'vSphere' in licenses.keys():
-                for host_spec in hosts_spec:
-                    host_spec['licenseKey'] = licenses['vSphere']
+        licenses = self.get_licenses(selected_domain_id, hosts_spec, is_primary,
+                                     self.check_vsan_storage(vxm_payload['networks']), use_keyless_in_mixed_mode)
 
         return vcenter_payload, vxm_payload, hosts_spec, cluster_name, dvs_payload, nsxt_payload, licenses
 
@@ -441,7 +446,7 @@ class VxRailWorkflowOptimizationAutomator:
                 return True
         return False
 
-    def enter_inputs(self, is_primary, gateway, netmask, domain_id):
+    def enter_inputs(self, is_primary, gateway, netmask, domain_id, use_keyless_in_mixed_mode=False):
         cluster_name = self.utils.valid_input("\033[1m Please enter cluster name: \033[0m", None,
                                               self.utils.valid_resource_name)
         print(*self.two_line_separator, sep='\n')
@@ -496,22 +501,25 @@ class VxRailWorkflowOptimizationAutomator:
             vxm_payload['sshThumbprint'] = vxrm_ssh_thumbprint
             vxm_payload['sslThumbprint'] = vxrm_ssl_thumbprint
 
-            if is_primary:
-                is_sub_active = self.check_is_subscription_active_mode(None)
-            else:
-                is_sub_active = self.check_is_subscription_active_mode(domain_id)
-
-            licenses = None
-            if is_sub_active is False:
-                licenses = self.licenses.main_func(vsan_storage)
-                if 'vSphere' in licenses.keys():
-                    for host_spec in hosts_spec:
-                        host_spec['licenseKey'] = licenses['vSphere']
+            licenses = self.get_licenses(domain_id, hosts_spec, is_primary, vsan_storage, use_keyless_in_mixed_mode)
 
             return cluster_name, hosts_spec, nsxt_payload, vxm_payload, dvs_payload, licenses
         else:
             self.utils.printRed("Exiting as VxRail Manager ssl/ssh thumbprint is not trusted")
             exit(1)
+
+    def get_licenses(self, domain_id, hosts_spec, is_primary, vsan_storage, use_keyless_in_mixed_mode):
+        if is_primary:
+            is_sub_active = self.check_is_subscription_active_mode(None)
+        else:
+            is_sub_active = self.check_is_subscription_active_mode(domain_id)
+        licenses = None
+        if not (is_sub_active or use_keyless_in_mixed_mode):
+            licenses = self.licenses.main_func(vsan_storage)
+            if 'vSphere' in licenses.keys():
+                for host_spec in hosts_spec:
+                    host_spec['licenseKey'] = licenses['vSphere']
+        return licenses
 
     def prepare_payload_for_create_domain(self, domain_name, cluster_name, vcenter_payload, hosts_spec,
                                           nsxt_payload, vxm_payload, dvs_payload, licenses, datastore_name):

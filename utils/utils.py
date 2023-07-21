@@ -158,6 +158,30 @@ class Utils:
                         if "errorResponse" in nested_task and "message" in nested_task["errorResponse"]:
                             self.printRed(nested_task["errorResponse"]["message"])
 
+    def does_given_version_satisfy_minimum(self, actual_version, minimum_version):
+        if not actual_version.strip():
+            self.printRed('Empty version provided in min version comparison')
+            exit(1)
+        if not minimum_version.strip():
+            self.printRed('Empty minimum version provided for comparison')
+            exit(1)
+
+        actual_version_string = actual_version.split('-')[0]
+        actual_versions = actual_version_string.split('.')
+        desired_versions = minimum_version.split('.')
+
+        for i in range(len(desired_versions)):
+            if i >= len(actual_versions):
+                if int(desired_versions[i]) > 0:
+                    return False
+            else:
+                actual_digit = int(actual_versions[i])
+                desired_digit = int(desired_versions[i])
+                if actual_digit != desired_digit:
+                    return actual_digit > desired_digit
+
+        return True
+
     def password_check(self, pwd, cannotbe=None):
         # rule: minlen = 8, maxlen = 32, at least 1 number, 1 upper, 1 lower, 1 special char
         minlen = 8
