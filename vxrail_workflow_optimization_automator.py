@@ -308,8 +308,8 @@ class VxRailWorkflowOptimizationAutomator:
             if is_system_licensing_mixed:
                 print(*self.two_line_separator, sep='\n')
                 self.utils.printCyan("Please select the type of licensing for the Domain:")
-                self.utils.printBold("1) Perpetual")
-                self.utils.printBold("2) VMware Cloud Foundation+")
+                self.utils.printBold("1) Based on License Keys")
+                self.utils.printBold("2) Keyless from VMware Cloud")
                 licensing_selection = self.utils.valid_input("\033[1m Enter your choice(number): \033[0m", None,
                                                              self.utils.valid_option, ["1", "2"])
                 if licensing_selection == "2":
